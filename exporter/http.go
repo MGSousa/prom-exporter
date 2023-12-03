@@ -8,21 +8,22 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-// TODO: customize this
-type ServiceStats struct {
+type HttpStats struct {
 	Hostname string `json:"hostname"`
 	Name     string `json:"name"`
 	Version  string `json:"version"`
+
+	// TODO: define more in the future
 }
 
 // FetchStats Fetch base endpoint for internal stats data from the specified service
-func FetchStats(uri string) *ServiceStats {
+func FetchStats(uri string) *HttpStats {
 	body, err := get(uri)
 	if err != nil {
 		return nil
 	}
 
-	serviceStats := ServiceStats{}
+	serviceStats := HttpStats{}
 	if err = json.Unmarshal(body, &serviceStats); err != nil {
 		log.Error("Could not parse JSON response from target stats", uri)
 		return nil

@@ -14,5 +14,7 @@ builds:
       - -s -w
 archives:
   - format: binary
+checksum:
+  disable: true
 snapshot:
   name_template: "{{ .Tag }}-next"

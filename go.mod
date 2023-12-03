@@ -5,12 +5,7 @@ go 1.21.3
 require (
 	github.com/prometheus/client_golang v1.17.0
 	github.com/sirupsen/logrus v1.9.3
-)
-
-require (
-	github.com/cweill/gotests v1.6.0 // indirect
-	golang.org/x/mod v0.14.0 // indirect
-	golang.org/x/tools v0.15.0 // indirect
+	golang.org/x/exp v0.0.0-20231127185646-65229373498e
 )
 
 require (

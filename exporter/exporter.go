@@ -10,13 +10,17 @@ import (
 )
 
 type (
+	Data         []string
+	CustomLabels map[string]prometheus.Labels
+
 	Exporter struct {
 		uri     string
 		name    string
 		version string
 		metrics Metrics
 
-		data []string
+		// extract parsed data
+		data Data
 	}
 
 	Metrics []struct {
@@ -26,6 +30,7 @@ type (
 	}
 )
 
+// NewCollector instantiates the collector
 func NewCollector(name, uri, version string) *Exporter {
 	return &Exporter{
 		name:    name,
@@ -35,12 +40,14 @@ func NewCollector(name, uri, version string) *Exporter {
 	}
 }
 
+// Describe describes metrics by setting HELP lines
 func (e *Exporter) Describe(ch chan<- *prometheus.Desc) {
 	for _, metric := range e.metrics {
 		ch <- metric.help
 	}
 }
 
+// Collect collects defined metrics
 func (e *Exporter) Collect(ch chan<- prometheus.Metric) {
 	e.process(ch)
 
@@ -49,29 +56,29 @@ func (e *Exporter) Collect(ch chan<- prometheus.Metric) {
 	}
 }
 
-var (
-	// s          = []string{"processor_rate_limit_1::dropped::0", "registrar_states::cleanup::0", "registrar_states::update::0", "registrar_writes::success::0", "system_cpu::cores::4", "system_load::1::0.71", "system_load::15::0.47", "system_load::5::0.53", "system_load_norm::1::0.1775", "system_load_norm::15::0.1175", "system_load_norm::5::0.1325"}
-	vl, future []string
-
-	fqname string
-	labels prometheus.Labels
-	mType  prometheus.ValueType
-)
-
+// process all extracted metrics from remote service
 func (e *Exporter) process(ch chan<- prometheus.Metric) {
+	var (
+		mType prometheus.ValueType
+	)
+
+	defer func() {
+		e.data = nil
+	}()
+
 	body, err := FetchMetrics(e.uri)
 	if err != nil {
 		// set target down on error
 		ch <- prometheus.MustNewConstMetric(
-			prometheus.NewDesc(fmt.Sprintf("%s_up", e.name), "Target up", nil, nil), prometheus.GaugeValue, float64(0))
+			prometheus.NewDesc(fmt.Sprintf("%s_up", e.name), SERVICE_UP_HELP, nil, nil), prometheus.GaugeValue, float64(0))
 		log.Debugf("Failed getting metrics endpoint of target: %s ", err.Error())
 		return
 	}
 
 	log.Debugln("Service scrapped up")
-	ch <- prometheus.MustNewConstMetric(prometheus.NewDesc(fmt.Sprintf("%s_up", e.name), "Target Up", nil, nil), prometheus.GaugeValue, float64(1))
+	ch <- prometheus.MustNewConstMetric(prometheus.NewDesc(fmt.Sprintf("%s_up", e.name), SERVICE_UP_HELP, nil, nil), prometheus.GaugeValue, float64(1))
 
-	// inject service version is exists
+	// export custom version if there isnt a default metric
 	if e.version != "" {
 		ch <- prometheus.MustNewConstMetric(
 			prometheus.NewDesc(fmt.Sprintf("%s_version_info", e.name), fmt.Sprintf("%s service info", e.name), nil,
@@ -79,114 +86,79 @@ func (e *Exporter) process(ch chan<- prometheus.Metric) {
 	}
 
 	// parse response body
-	p := Parser{data: make([]string, 0)}
-	p.parse(body)
-	e.data = p.data
+	e.parse(body)
 
-	sort.Slice(e.data, func(i, j int) bool { return e.data[i] < e.data[j] })
+	// extract strings and process them to be exported
+	less := e.extractStrings(ch)
 
-	stats := make(Metrics, len(e.data))
+	// sort parsed data
+	sort.SliceStable(e.data, func(i, j int) bool { return e.data[i] < e.data[j] })
+
+	// iterate over parsed metrics
+	i := 0
+	stats := make(Metrics, len(e.data)-less)
 	for k, v := range e.data {
-		vl = split(v, "::")
+		if v != "" {
+			m := split(v, RAW_METRIC_DELIM)
+			value, err := strconv.ParseFloat(m[2], 64)
+			if err != nil {
+				log.Debugln(err)
+				value = 0
+			}
 
-		i, err := strconv.ParseFloat(vl[2], 64)
-		if err != nil {
-			// a string was found
-			log.Debugln(err)
-			i = 0
-		}
-
-		// check last filed for the specific ValueType
-		if contains(vl[1], "total") {
-			mType = prometheus.CounterValue
-		} else {
-			if len(vl) > 3 {
+			// check last filed for the specific ValueType
+			// TODO: custom filter by a map file
+			if len(m) > 3 {
 				mType = prometheus.UntypedValue
 			} else {
 				mType = prometheus.GaugeValue
 			}
+
+			// build && extract Full-Qualified Name and Labels
+			fqname, labels := e.build(m, k)
+
+			// supply metrics
+			stats[i].help = prometheus.NewDesc(
+				fqname, "", nil, labels)
+			stats[i].value = float64(value)
+			stats[i].vtype = mType
+
+			i++
 		}
-
-		// build Full-Qualified Name
-		e.build(k)
-
-		// setup metrics
-		stats[k].help = prometheus.NewDesc(
-			fqname, "", nil, labels)
-		stats[k].value = float64(i)
-		stats[k].vtype = mType
 	}
 
 	e.metrics = stats
 }
 
-func (e *Exporter) build(k int) {
-	labels = nil
-	fp := split(vl[0], "_")
-
-	if len(fp) == 2 {
-
-		if k < (len(e.data) - 1) {
-			future = split(e.data[k+1], "::")
-			if vl[0] == future[0] {
-
-				fqname = prometheus.BuildFQName(
-					e.name, fmt.Sprintf("%s", join(fp[0:len(fp)-1], "_")), fp[len(fp)-1])
-				labels = prometheus.Labels{"metric": vl[1]}
-			} else {
-				future = split(e.data[k-1], "::")
-				if vl[0] == future[0] {
-					fqname = prometheus.BuildFQName(
-						e.name, fmt.Sprintf("%s", join(fp[0:len(fp)-1], "_")), fp[len(fp)-1])
-					labels = prometheus.Labels{"metric": vl[1]}
-				} else {
-					fqname = prometheus.BuildFQName(e.name, fmt.Sprintf("%s_%s", fp[0], fp[1]), vl[1])
+// check if custom string metrics are found
+// then extract them as a valid metric to be in Prometheus format
+func (e *Exporter) extractStrings(ch chan<- prometheus.Metric) int {
+	var (
+		metric  []string
+		i, less int
+	)
+	untypedMetrics := make(CustomLabels, 0)
+	for _, v := range e.data {
+		metric = split(v, RAW_METRIC_DELIM)
+		if _, err := strconv.ParseFloat(metric[2], 64); err != nil {
+			if len(metric) > 3 {
+				if untypedMetrics[metric[0]] == nil {
+					untypedMetrics[metric[0]] = make(prometheus.Labels)
 				}
-			}
-		} else if k == (len(e.data) - 1) {
-			future = split(e.data[k-1], "::")
-			if vl[0] == future[0] {
-				fqname = prometheus.BuildFQName(
-					e.name, fmt.Sprintf("%s", join(fp[0:len(fp)-1], "_")), fp[len(fp)-1])
-				labels = prometheus.Labels{"metric": vl[1]}
-			} else {
-				fqname = prometheus.BuildFQName(e.name, fmt.Sprintf("%s_%s", fp[0], fp[1]), vl[1])
-			}
-		} else {
-			fqname = prometheus.BuildFQName(e.name, fmt.Sprintf("%s_%s", fp[0], fp[1]), vl[1])
-		}
+				untypedMetrics[metric[0]][metric[1]] = metric[2]
 
-	} else if len(fp) >= 3 {
-
-		if k < (len(e.data) - 1) {
-			future = split(e.data[k+1], "::")
-			if vl[0] == future[0] {
-
-				fqname = prometheus.BuildFQName(
-					e.name, fmt.Sprintf("%s", join(fp[0:len(fp)-1], "_")), fp[len(fp)-1])
-				labels = prometheus.Labels{"metric": vl[1]}
-			} else {
-
-				if k == 0 {
-					fqname = prometheus.BuildFQName(e.name, fmt.Sprintf("%s_%s", fp[0], fp[1]), vl[1])
-				} else {
-					future = split(e.data[k-1], "::")
-					if vl[0] == future[0] {
-						fqname = prometheus.BuildFQName(
-							e.name, fmt.Sprintf("%s", join(fp[0:len(fp)-1], "_")), fp[len(fp)-1])
-						labels = prometheus.Labels{"metric": vl[1]}
-					} else {
-						fqname = prometheus.BuildFQName(e.name, fmt.Sprintf("%s_%s", fp[0], fp[1]), vl[1])
-					}
-				}
-			}
-		} else if k == (len(e.data) - 1) {
-			future = split(e.data[k-1], "::")
-			if vl[0] == future[0] {
-				labels = prometheus.Labels{"metric": vl[1]}
+				// unset old metric
+				e.data[i] = ""
+				less++
 			}
 		}
-		fqname = prometheus.BuildFQName(
-			e.name, fmt.Sprintf("%s", join(fp[0:len(fp)-1], "_")), fp[len(fp)-1])
+		i++
 	}
+
+	for m, labels := range untypedMetrics {
+		ch <- prometheus.MustNewConstMetric(
+			prometheus.NewDesc(fmt.Sprintf("%s_%s", e.name, m), "", nil,
+				labels), prometheus.UntypedValue, float64(1))
+	}
+	return less
 }

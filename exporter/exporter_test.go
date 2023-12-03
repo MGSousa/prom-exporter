@@ -1,69 +1,31 @@
 package exporter
 
 import (
-	"reflect"
+	"sort"
 	"testing"
 
-	"github.com/prometheus/client_golang/prometheus"
+	"golang.org/x/exp/slices"
 )
 
-func TestNewCollector(t *testing.T) {
-	type args struct {
-		name string
-		uri  string
-	}
-	tests := []struct {
-		name string
-		args args
-		want *Exporter
-	}{
-		// TODO: Add test cases.
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := NewCollector(tt.args.name, tt.args.uri); !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("NewCollector() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
+var (
+	m    []string
+	data = []string{"processor_rate_limit_1::dropped::0", "registrar_states::cleanup::0", "registrar_states::update::0", "registrar_writes::success::0", "system_cpu::cores::4", "system_load::1::0.71", "system_load::15::0.47", "system_load::5::0.53", "system_load_norm::1::0.1775", "system_load_norm::15::0.1175", "system_load_norm::5::0.1325"}
+)
 
-func TestExporter_Collect(t *testing.T) {
+func (d Data) Len() int           { return len(d) }
+func (d Data) Swap(i, j int)      { d[i], d[j] = d[j], d[i] }
+func (d Data) Less(i, j int) bool { return d[i] < d[j] }
+
+func BenchmarkBuildSort(t *testing.B) {
 	type fields struct {
 		uri     string
 		name    string
+		version string
 		metrics Metrics
+		data    []string
 	}
 	type args struct {
-		ch chan<- prometheus.Metric
-	}
-	tests := []struct {
-		name   string
-		fields fields
-		args   args
-	}{
-		// TODO: Add test cases.
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			e := &Exporter{
-				uri:     tt.fields.uri,
-				name:    tt.fields.name,
-				metrics: tt.fields.metrics,
-			}
-			e.Collect(tt.args.ch)
-		})
-	}
-}
-
-func TestExporter_process(t *testing.T) {
-	type fields struct {
-		uri     string
-		name    string
-		metrics Metrics
-	}
-	type args struct {
-		ch chan<- prometheus.Metric
+		k int
 	}
 	tests := []struct {
 		name   string
@@ -71,7 +33,6 @@ func TestExporter_process(t *testing.T) {
 		args   args
 	}{
 		{
-			// TODO: Add test cases.
 			name: "test",
 			fields: fields{
 				uri:     "http://localhost:5066/stats",
@@ -80,14 +41,155 @@ func TestExporter_process(t *testing.T) {
 			},
 		},
 	}
+
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+		t.Run(tt.name, func(t *testing.B) {
 			e := &Exporter{
 				uri:     tt.fields.uri,
 				name:    tt.fields.name,
+				version: tt.fields.version,
 				metrics: tt.fields.metrics,
+				data:    data,
 			}
-			e.process(tt.args.ch)
+			sort.Slice(e.data, func(i, j int) bool { return e.data[i] < e.data[j] })
+			for k, v := range e.data {
+				m = split(v, "::")
+				e.build(m, k)
+			}
+		})
+	}
+}
+
+func BenchmarkBuildSortStable(t *testing.B) {
+	type fields struct {
+		uri     string
+		name    string
+		version string
+		metrics Metrics
+		data    []string
+	}
+	type args struct {
+		k int
+	}
+	tests := []struct {
+		name   string
+		fields fields
+		args   args
+	}{
+		{
+			name: "test",
+			fields: fields{
+				uri:     "http://localhost:5066/stats",
+				name:    "test",
+				metrics: Metrics{},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.B) {
+			e := &Exporter{
+				uri:     tt.fields.uri,
+				name:    tt.fields.name,
+				version: tt.fields.version,
+				metrics: tt.fields.metrics,
+				data:    data,
+			}
+			sort.SliceStable(e.data, func(i, j int) bool { return e.data[i] < e.data[j] })
+			for k, v := range e.data {
+				m = split(v, "::")
+				e.build(m, k)
+			}
+		})
+	}
+}
+
+func BenchmarkBuildXSlices(t *testing.B) {
+	type fields struct {
+		uri     string
+		name    string
+		version string
+		metrics Metrics
+		data    []string
+	}
+	type args struct {
+		k int
+	}
+	tests := []struct {
+		name   string
+		fields fields
+		args   args
+	}{
+		{
+			name: "test",
+			fields: fields{
+				uri:     "http://localhost:5066/stats",
+				name:    "test",
+				metrics: Metrics{},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.B) {
+			e := &Exporter{
+				uri:     tt.fields.uri,
+				name:    tt.fields.name,
+				version: tt.fields.version,
+				metrics: tt.fields.metrics,
+				data:    data,
+			}
+
+			slices.Sort(e.data)
+			for k, v := range e.data {
+				m = split(v, "::")
+				e.build(m, k)
+			}
+		})
+	}
+}
+
+func BenchmarkBuildSortDefault(t *testing.B) {
+	type fields struct {
+		uri     string
+		name    string
+		version string
+		metrics Metrics
+		data    Data
+	}
+	type args struct {
+		k int
+	}
+	tests := []struct {
+		name   string
+		fields fields
+		args   args
+	}{
+		{
+			name: "test",
+			fields: fields{
+				uri:     "http://localhost:5066/stats",
+				name:    "test",
+				metrics: Metrics{},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.B) {
+			e := &Exporter{
+				uri:     tt.fields.uri,
+				name:    tt.fields.name,
+				version: tt.fields.version,
+				metrics: tt.fields.metrics,
+				data:    data,
+			}
+
+			sort.Sort(e.data)
+			for k, v := range e.data {
+				m = split(v, "::")
+				e.build(m, k)
+			}
 		})
 	}
 }

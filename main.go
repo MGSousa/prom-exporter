@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"os"
 	"strings"
-
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -17,12 +16,15 @@ import (
 )
 
 var (
-	listenAddress      = flag.String("listen-address", ":19100", "Address to listen on for telemetry.")
-	metricsPath        = flag.String("telemetry-path", "/metrics", "Base path under which to expose metrics.")
-	serviceName        = flag.String("service-name", "", "Service name to reference")
-	serviceUri         = flag.String("service-uri", "http://localhost:5066", "HTTP address of the service.")
-	serviceMetricsPath = flag.String("service-metrics-path", "metrics", "Service path to scrape metrics from.")
-	debugLevel         = flag.Bool("debug", false, "Enable debug mode")
+	internalVersion string
+
+	listenAddress        = flag.String("listen-address", ":19100", "Address to listen on for telemetry.")
+	metricsPath          = flag.String("telemetry-path", "/metrics", "Base path under which to expose metrics.")
+	serviceName          = flag.String("service-name", "", "Service name to reference")
+	serviceUri           = flag.String("service-uri", "http://localhost:5066", "HTTP address of the service.")
+	serviceMetricsPath   = flag.String("service-metrics-path", "metrics", "Service path to scrape metrics from.")
+	serviceVersionScrape = flag.Bool("service-version-scrape", false, "Enable whether the service will be internally scraped for fetching remote build version or not")
+	debugLevel           = flag.Bool("debug", false, "Enable debug mode")
 )
 
 func main() {
@@ -38,17 +40,21 @@ func main() {
 	}
 
 	log.Info("Check if target is reachable...")
-	serviceVersion := checkEndpoint(*serviceUri)
+	if *serviceVersionScrape {
+		internalVersion = checkEndpoint(*serviceUri)
+	} else {
+		checkEndpoint(*serviceUri)
+	}
 	log.Info("Target endpoint is reachable")
 
 	registry := prometheus.NewRegistry()
 
-	// register version metrics
+	// register current Exporter version metrics
 	versionMetric := version.NewCollector(name)
 	registry.MustRegister(versionMetric)
 
-	// register service metrics
-	exporter := exporter.NewCollector(name, fmt.Sprintf("%s/%s", *serviceUri, *serviceMetricsPath), serviceVersion)
+	// register remote service metrics
+	exporter := exporter.NewCollector(name, fmt.Sprintf("%s/%s", *serviceUri, *serviceMetricsPath), internalVersion)
 	registry.MustRegister(exporter)
 
 	http.Handle(*metricsPath, promhttp.HandlerFor(
@@ -71,11 +77,12 @@ func main() {
 	}
 }
 
+// TODO: improve this method
 func checkEndpoint(endpoint string) string {
 	stopCh := make(chan bool)
 	t := time.NewTicker(2 * time.Second)
 
-	stats := &exporter.ServiceStats{}
+	stats := &exporter.HttpStats{}
 
 discovery:
 	for {
