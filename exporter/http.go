@@ -47,7 +47,12 @@ func FetchMetrics(uri string) (any, error) {
 }
 
 func get(uri string) ([]byte, error) {
-	res, err := http.Get(uri)
+	req, err := http.NewRequest(http.MethodGet, uri, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	res, err := http.DefaultClient.Do(req)
 	if err != nil {
 		log.Errorf("Could not fetch metrics for endpoint of target: %s", uri)
 		return nil, err

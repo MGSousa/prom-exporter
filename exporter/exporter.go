@@ -106,7 +106,6 @@ func (e *Exporter) process(ch chan<- prometheus.Metric) {
 				value = 0
 			}
 
-			// check last filed for the specific ValueType
 			// TODO: custom filter by a map file
 			if len(m) > 3 {
 				mType = prometheus.UntypedValue

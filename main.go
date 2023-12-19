@@ -16,15 +16,20 @@ import (
 )
 
 var (
-	internalVersion string
+	internalVersion, serviceEndpoint string
 
-	listenAddress        = flag.String("listen-address", ":19100", "Address to listen on for telemetry.")
-	metricsPath          = flag.String("telemetry-path", "/metrics", "Base path under which to expose metrics.")
-	serviceName          = flag.String("service-name", "", "Service name to reference")
-	serviceUri           = flag.String("service-uri", "http://localhost:5066", "HTTP address of the service.")
+	// internal settings
+	listenAddress = flag.String("listen-address", ":19100", "Address to listen on to be scraped.")
+	metricsPath   = flag.String("telemetry-path", "/metrics", "Base path under which to expose metrics.")
+	debugLevel    = flag.Bool("debug", false, "Enable debug mode.")
+
+	// remote service related flags
+	serviceName          = flag.String("service-name", "", "Remote service name to reference.")
+	serviceProtocol      = flag.String("service-protocol", "http", "HTTP Schema of the remote service (http or https).")
+	serviceUri           = flag.String("service-uri", "", "Endpoint address of the remote service.")
+	servicePort          = flag.String("service-port", "80", "HTTP Port of the remote service.")
 	serviceMetricsPath   = flag.String("service-metrics-path", "metrics", "Service path to scrape metrics from.")
-	serviceVersionScrape = flag.Bool("service-version-scrape", false, "Enable whether the service will be internally scraped for fetching remote build version or not")
-	debugLevel           = flag.Bool("debug", false, "Enable debug mode")
+	serviceVersionScrape = flag.Bool("service-version-scrape", false, "Enable whether the service will be internally scraped for fetching remote build version or not.")
 )
 
 func main() {
@@ -32,18 +37,31 @@ func main() {
 
 	name := *serviceName
 	if strings.Trim(name, " ") == "" {
-		log.Fatalln("Service name not known! Specify by -service-name SERVICE")
+		log.Fatalln("Service name not set! Specify by -service-name SERVICE")
 	}
 
+	// build service endpoint
+	// if not set try to fetch from env
+	serviceEndpoint = fmt.Sprintf("%s://%s:%s", *serviceProtocol, *serviceUri, *servicePort)
+	if *serviceUri == "" {
+		host, exists := os.LookupEnv("SERVICE_ENDPOINT")
+		if exists && host != "" {
+			serviceEndpoint = fmt.Sprintf("%s://%s:%s", *serviceProtocol, host, *servicePort)
+		} else {
+			log.Fatalln("Service URI is not set! Specify either a '-service-uri' flag OR an environment variable 'SERVICE_ENDPOINT'")
+		}
+	}
+
+	// enable debug mode if required
 	if *debugLevel {
 		log.SetLevel(log.DebugLevel)
 	}
 
 	log.Info("Check if target is reachable...")
 	if *serviceVersionScrape {
-		internalVersion = checkEndpoint(*serviceUri)
+		internalVersion = checkEndpoint(serviceEndpoint)
 	} else {
-		checkEndpoint(*serviceUri)
+		checkEndpoint(serviceEndpoint)
 	}
 	log.Info("Target endpoint is reachable")
 
@@ -54,7 +72,7 @@ func main() {
 	registry.MustRegister(versionMetric)
 
 	// register remote service metrics
-	exporter := exporter.NewCollector(name, fmt.Sprintf("%s/%s", *serviceUri, *serviceMetricsPath), internalVersion)
+	exporter := exporter.NewCollector(name, fmt.Sprintf("%s/%s", serviceEndpoint, *serviceMetricsPath), internalVersion)
 	registry.MustRegister(exporter)
 
 	http.Handle(*metricsPath, promhttp.HandlerFor(
@@ -68,7 +86,7 @@ func main() {
 
 	srv := &http.Server{
 		Addr:              *listenAddress,
-		ReadHeaderTimeout: 5 * time.Second,
+		ReadHeaderTimeout: 30 * time.Second,
 	}
 	if err := srv.ListenAndServe(); err != nil {
 		log.WithFields(log.Fields{
@@ -77,10 +95,12 @@ func main() {
 	}
 }
 
-// TODO: improve this method
+// check if service endpoint is reachable
+// increases duration by 5secs for the next ticket if unavailable
 func checkEndpoint(endpoint string) string {
+	var duration = 5
 	stopCh := make(chan bool)
-	t := time.NewTicker(2 * time.Second)
+	t := time.NewTicker(time.Duration(duration) * time.Second)
 
 	stats := &exporter.HttpStats{}
 
@@ -91,7 +111,10 @@ discovery:
 			if stats = exporter.FetchStats(endpoint); stats != nil {
 				break discovery
 			}
-			log.Errorln("base endpoint not available, retrying in 2s")
+			log.Errorf("service endpoint not available, retrying in %ds", duration)
+
+			t = time.NewTicker(time.Duration(duration) * time.Second)
+			duration = duration + 5
 			continue
 
 		case <-stopCh:
