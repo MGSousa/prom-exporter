@@ -1,0 +1,7 @@
+FROM scratch
+
+WORKDIR /app
+
+COPY ./dist/prom-exporter_linux_amd64_v1/prom-exporter ./ 
+
+ENTRYPOINT [ "./prom-exporter" ]
