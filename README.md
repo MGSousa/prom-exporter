@@ -1,9 +1,11 @@
 # <img src="https://static-00.iconduck.com/assets.00/prometheus-icon-511x512-1vmxbcxr.png" width="50"/>  Auto Prometheus Exporter
 [![Release](https://github.com/MGSousa/prom-exporter/actions/workflows/release.yml/badge.svg)](https://github.com/MGSousa/prom-exporter/actions/workflows/release.yml)
+[![Docker Version](https://img.shields.io/docker/v/mgsousa/prom-exporter.svg)](https://hub.docker.com/r/MGSousa/prom-exporter/)
+[![Docker Pulls](https://img.shields.io/docker/pulls/mgsousa/prom-exporter.svg)](https://hub.docker.com/r/MGSousa/prom-exporter/)
 
 Prometheus exporter that fetches and auto-resolves JSON data from selected services by converting metrics/stats in Prometheus format, being ready to be scrapped.
 
-Compatible with Elastic Beats plugins (Filebeat, Auditbeat, Packetbeat, Metricbeat, etc.) and any other tool that has any HTTP endpoint with output in JSON.
+Compatible with Elastic Beats plugins (Filebeat, Auditbeat, Packetbeat, Metricbeat, etc.) and any other tool with HTTP endpoint output in JSON.
 
 ## Install
 ### Linux / Darwin 
