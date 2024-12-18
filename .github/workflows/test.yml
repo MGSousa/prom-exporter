@@ -1,4 +1,4 @@
-name: Test prom-exporter
+name: Test Build
 
 on:
   pull_request:
