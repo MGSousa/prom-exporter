@@ -17,4 +17,4 @@ archives:
 checksum:
   disable: true
 snapshot:
-  name_template: "{{ .Tag }}"
+  version_template: "{{ .Tag }}"
